@@ -1,0 +1,54 @@
+#!/usr/bin/env zsh
+
+set -e
+
+script_dir="${0:A:h}"
+prompt="${script_dir}/prompt.md"
+progress="${script_dir}/progress.md"
+
+if [ -z "$1" ]; then
+  echo "Usage: $0 <iterations>"
+  exit 1
+fi
+
+start=$SECONDS
+i=1
+max=$1
+
+fmt_elapsed() {
+  local t=$1
+  local m=$((t / 60))
+  local s=$((t % 60))
+  printf '%02d:%02d' $m $s
+}
+
+echo "Agent loop: up to $max iterations | started $(date '+%H:%M:%S')"
+echo ""
+
+while [ $i -le $max ]; do
+  elapsed=$(fmt_elapsed $((SECONDS - start)))
+  echo "--- [$elapsed] Iteration $i/$max ---"
+
+  tmpfile=$(mktemp)
+  cat "$prompt" | opencode run -f "$progress" --dangerously-skip-permissions 2>&1 | tee "$tmpfile"
+  run_exit=${pipestatus[1]}
+  result=$(cat "$tmpfile")
+  rm -f "$tmpfile"
+
+  if [ $run_exit -ne 0 ]; then
+    echo ""
+    echo "[ERROR] Iteration $i failed (exit $run_exit). Continuing to next..."
+  elif echo "$result" | grep -q '<promise>COMPLETE</promise>'; then
+    echo ""
+    echo "[DONE] AI signaled completion at iteration $i/$max."
+    break
+  fi
+
+  i=$((i + 1))
+done
+
+elapsed=$(fmt_elapsed $((SECONDS - start)))
+completed=$((i < max ? i : max))
+
+echo ""
+echo "=== Finished $completed/$max iterations in ${elapsed} ==="

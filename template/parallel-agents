@@ -1,0 +1,229 @@
+#!/usr/bin/env zsh
+
+set -e
+
+script_dir="${0:A:h}"
+agent_once="${script_dir}/agent-once"
+
+# Parse command line args
+dry_run=false
+if [[ "$1" == "--dry-run" ]]; then
+  dry_run=true
+  echo "=== DRY RUN MODE ==="
+  echo ""
+fi
+
+echo "=== Parallel Agents ==="
+echo "Started: $(date '+%H:%M:%S')"
+echo ""
+
+# Helper: Parse files from issue body
+parse_files() {
+  local issue_body="$1"
+  local section="$2"  # "Existing files to modify" or "New files"
+  
+  # Extract lines between section header and next ## header
+  echo "$issue_body" | awk -v section="$section" '
+    $0 ~ "## " section {flag=1; next}
+    flag && /^## / {flag=0}
+    flag && /^- `/ {
+      gsub(/^- `/, "")
+      gsub(/`.*$/, "")
+      print
+    }
+  '
+}
+
+# Helper: Check if issue is blocked
+is_blocked() {
+  local issue_body="$1"
+  
+  # Extract blocker issue numbers from "## Blocked by" section
+  # Format: "- #14 (description)" or "- Blocked by #14"
+  local blockers=$(echo "$issue_body" | awk '
+    /^## Blocked by/ {flag=1; next}
+    flag && /^## / {flag=0}
+    flag && /^- / {
+      if (match($0, /#[0-9]+/)) {
+        print substr($0, RSTART+1, RLENGTH-1)
+      }
+    }
+  ')
+  
+  for blocker in $blockers; do
+    local blocker_state=$(gh issue view "$blocker" --json state --jq '.state' 2>/dev/null || echo "unknown")
+    if [ "$blocker_state" != "closed" ]; then
+      return 0  # true, is blocked
+    fi
+  done
+  
+  return 1  # false, not blocked
+}
+
+# Helper: Check if two file sets overlap
+files_overlap() {
+  local files1="$1"
+  local files2="$2"
+  
+  # Split on whitespace (handles both spaces and newlines)
+  local -a arr1=(${=files1})
+  local -a arr2=(${=files2})
+  
+  for f1 in $arr1; do
+    # Trim whitespace
+    f1=$(echo "$f1" | xargs)
+    [ -z "$f1" ] && continue
+    
+    for f2 in $arr2; do
+      f2=$(echo "$f2" | xargs)
+      [ -z "$f2" ] && continue
+      
+      if [ "$f1" = "$f2" ]; then
+        return 0  # true, overlap
+      fi
+    done
+  done
+  
+  return 1  # false, no overlap
+}
+
+iteration=1
+while true; do
+  echo ""
+  echo "========================================"
+  echo "Iteration $iteration"
+  echo "========================================"
+  
+  # Fetch all open issues (exclude parent PRD)
+  echo "Fetching open issues..."
+  issues_json=$(gh issue list --state open --json number,title,labels --limit 100)
+  
+  # Filter out parent PRD and issues with in-progress/completed labels
+  available_issues=$(echo "$issues_json" | jq -r '
+    .[] | 
+    select(
+      (.labels | map(.name) | 
+        (contains(["PRD"]) or contains(["epic"]) or contains(["parent"])) | not) and
+      (.labels | map(.name) | 
+        (contains(["in-progress"]) or contains(["completed"])) | not)
+    ) | 
+    .number
+  ')
+  
+  if [ -z "$available_issues" ]; then
+    echo "No more available issues. Done!"
+    break
+  fi
+  
+  echo "Available issues: $available_issues"
+  echo ""
+  
+  # Build file map for each issue
+  declare -A issue_files
+  declare -A issue_blocked
+  
+  # Convert newline-separated string to array
+  issues_array=(${(f)available_issues})
+  
+  for issue in $issues_array; do
+    echo "Analyzing issue #$issue..."
+    
+    # Fetch issue body separately to avoid JSON parsing issues
+    issue_body=$(gh issue view "$issue" --json body --jq '.body' 2>/dev/null || echo "")
+    
+    if [ -z "$issue_body" ]; then
+      echo "  Warning: Could not fetch body for issue #$issue"
+      continue
+    fi
+    
+    # Parse files
+    existing_files=$(parse_files "$issue_body" "Existing files to modify")
+    new_files=$(parse_files "$issue_body" "New files")
+    all_files="$existing_files $new_files"
+    issue_files[$issue]="$all_files"
+    
+    # Check if blocked
+    if is_blocked "$issue_body"; then
+      issue_blocked[$issue]=1
+      echo "  Issue #$issue is blocked"
+    else
+      issue_blocked[$issue]=0
+      echo "  Issue #$issue is ready"
+      echo "  Files: $all_files"
+    fi
+  done
+  
+  echo ""
+  echo "Finding parallel issues..."
+  
+  # Find issues that can run in parallel
+  parallel_issues=()
+  for issue in $issues_array; do
+    # Skip if blocked
+    if [ "${issue_blocked[$issue]}" = "1" ]; then
+      continue
+    fi
+    
+    # Check if this issue conflicts with any already selected
+    conflict=false
+    for selected in $parallel_issues; do
+      if files_overlap "${issue_files[$issue]}" "${issue_files[$selected]}"; then
+        echo "  Issue #$issue conflicts with #$selected (shared files)"
+        conflict=true
+        break
+      fi
+    done
+    
+    if ! $conflict; then
+      parallel_issues+=($issue)
+      echo "  Issue #$issue can run in parallel"
+    fi
+  done
+  
+  if [ ${#parallel_issues[@]} -eq 0 ]; then
+    echo "No parallel issues found. Possible deadlock or all issues blocked."
+    break
+  fi
+  
+  echo ""
+  echo "Running ${#parallel_issues[@]} issue(s) in parallel: ${parallel_issues[@]}"
+  
+  if $dry_run; then
+    echo "[DRY RUN] Would spawn agents for: ${parallel_issues[@]}"
+    echo ""
+    echo "Dry run complete. Exiting."
+    break
+  fi
+  
+  # Spawn agents in parallel
+  pids=()
+  for issue in $parallel_issues; do
+    echo "  Spawning agent for issue #$issue"
+    "$agent_once" "$issue" &
+    pids+=($!)
+  done
+  
+  # Wait for all agents to complete
+  echo ""
+  echo "Waiting for ${#pids[@]} agent(s) to complete..."
+  failed=0
+  for pid in $pids; do
+    if ! wait "$pid"; then
+      echo "  Agent failed (pid $pid)"
+      failed=$((failed + 1))
+    fi
+  done
+  
+  if [ $failed -gt 0 ]; then
+    echo ""
+    echo "Warning: $failed agent(s) failed"
+  fi
+  
+  iteration=$((iteration + 1))
+done
+
+echo ""
+echo "========================================"
+echo "All issues complete!"
+echo "Finished: $(date '+%H:%M:%S')"
+echo "========================================"

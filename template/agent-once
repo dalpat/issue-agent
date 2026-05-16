@@ -1,0 +1,68 @@
+#!/usr/bin/env zsh
+
+set -e
+
+script_dir="${0:A:h}"
+prompt="${script_dir}/.agent/agent-once-prompt.md"
+progress="${script_dir}/.agent/progress.md"
+
+if [ -z "$1" ]; then
+  echo "Usage: $0 <issue-number>"
+  exit 1
+fi
+
+issue="$1"
+max_retries=3
+
+echo "=== Agent-Once: Issue #$issue ==="
+echo "Started: $(date '+%H:%M:%S')"
+echo ""
+
+# Add in-progress label
+echo "Marking issue #$issue as in-progress..."
+gh issue edit "$issue" --add-label "in-progress" 2>/dev/null || {
+  # Create label if it doesn't exist
+  gh label create "in-progress" --description "Agent is working on this" --color "FFA500" 2>/dev/null || true
+  gh issue edit "$issue" --add-label "in-progress"
+}
+
+# Try up to max_retries times
+for ((retry=1; retry<=max_retries; retry++)); do
+  echo "--- Attempt $retry/$max_retries ---"
+  
+  tmpfile=$(mktemp)
+  ISSUE_NUMBER="$issue" cat "$prompt" | opencode run -f "$progress" --dangerously-skip-permissions 2>&1 | tee "$tmpfile"
+  run_exit=${pipestatus[1]}
+  result=$(cat "$tmpfile")
+  rm -f "$tmpfile"
+  
+  if [ $run_exit -eq 0 ] && echo "$result" | grep -q '<promise>COMPLETE</promise>'; then
+    echo ""
+    echo "[SUCCESS] Issue #$issue completed"
+    
+    # Mark as completed
+    gh issue edit "$issue" --add-label "completed" --remove-label "in-progress" 2>/dev/null || {
+      gh label create "completed" --description "Agent completed this" --color "0E8A16" 2>/dev/null || true
+      gh issue edit "$issue" --add-label "completed" --remove-label "in-progress"
+    }
+    
+    echo "Issue #$issue completed at $(date '+%H:%M:%S')" >> "$progress"
+    exit 0
+  fi
+  
+  echo ""
+  echo "[RETRY] Attempt $retry failed, retrying..."
+  sleep 2
+done
+
+echo ""
+echo "[FAILED] Issue #$issue failed after $max_retries attempts"
+
+# Mark as failed
+gh issue edit "$issue" --add-label "failed" --remove-label "in-progress" 2>/dev/null || {
+  gh label create "failed" --description "Agent failed on this" --color "D73A4A" 2>/dev/null || true
+  gh issue edit "$issue" --add-label "failed" --remove-label "in-progress"
+}
+
+echo "Issue #$issue failed at $(date '+%H:%M:%S')" >> "$progress"
+exit 1
