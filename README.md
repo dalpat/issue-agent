@@ -18,10 +18,12 @@ cd /path/to/your-project
 /path/to/issue-agent/install.sh
 ```
 
+The installer runs in `bash`, copies project-local commands into `.agent/`, installs shared skills into `~/.agents/skills`, and exits non-zero if required skills fail to install.
+
 ## What it does
 
 1. Creates a `.agent/` directory inside your project
-2. Copies the runner script and a starter prompt
+2. Copies all project commands into `.agent/`
 3. Adds `.agent/progress.md` to `.gitignore`
 4. You edit `.agent/prompt.md` to match your project
 
@@ -38,7 +40,7 @@ Runs up to 10 iterations, picking and implementing one issue at a time. Stops ea
 ### Parallel mode (opt-in)
 
 ```bash
-./parallel-agents
+.agent/parallel-agents
 ```
 
 Auto-detects which issues can run in parallel by parsing file dependencies from issue bodies. Spawns multiple agents simultaneously for non-conflicting issues.
@@ -47,11 +49,22 @@ Auto-detects which issues can run in parallel by parsing file dependencies from 
 - Issues must have "## Existing files to modify" and "## New files" sections
 - Issues must have "## Blocked by" section listing dependencies
 - Use the `to-issues` skill to create properly formatted issues
+- `jq` must be installed locally
 
 **Dry-run (see what would happen):**
 ```bash
-./parallel-agents --dry-run
+.agent/parallel-agents --dry-run
 ```
+
+`.agent/parallel-agents` validates `gh`, `jq`, and `opencode` before it starts scheduling work.
+
+### Single-Issue mode
+
+```bash
+.agent/agent-once 123
+```
+
+Runs exactly one issue. It validates `gh` and `opencode` before it starts.
 
 ## Project setup checklist
 
@@ -68,19 +81,62 @@ Auto-detects which issues can run in parallel by parsing file dependencies from 
 - [ ] Ensure issues have proper format (use `to-issues` skill)
 - [ ] Each issue must list "## Existing files to modify" and "## New files"
 - [ ] Each issue must list "## Blocked by" dependencies
-- [ ] Run `./parallel-agents --dry-run` to verify
-- [ ] Run `./parallel-agents` to execute
+- [ ] Run `.agent/parallel-agents --dry-run` to verify
+- [ ] Run `.agent/parallel-agents` to execute
 
 ## How parallel mode works
 
-The `parallel-agents` orchestrator:
+The `.agent/parallel-agents` orchestrator:
 1. Fetches all open issues
 2. Parses "## Existing files to modify" and "## New files" sections
 3. Parses "## Blocked by" section to check dependencies
 4. Finds issues that can run in parallel (no file overlap, no open blockers)
-5. Spawns `agent-once` for each parallel issue
+5. Spawns `.agent/agent-once` for each parallel issue
 6. Waits for all to complete
 7. Repeats until no more issues
+
+Each `.agent/agent-once` run renders a concrete single-issue prompt before invoking `opencode`, so parallel mode does not rely on issue numbers coming from environment variables.
+
+## Command Contracts
+
+### `.agent/agent <iterations>`
+
+- Reads `.agent/prompt.md`
+- Appends to `.agent/progress.md`
+- Runs the sequential issue loop
+- Requires `gh` and `opencode`
+- Exit code `0` means the loop finished normally
+- Exit code `1` means the command could not start correctly
+
+### `.agent/agent-once <issue-number>`
+
+- Works on exactly one GitHub issue
+- Reads `.agent/agent-once-prompt.md`
+- Appends to `.agent/progress.md`
+- Updates GitHub labels and issue state for that issue
+- Requires `gh` and `opencode`
+- Exit code `0` means the issue completed
+- Exit code `1` means the issue failed after retries
+
+### `.agent/parallel-agents`
+
+- Scans open child issues
+- Reads issue bodies to detect file conflicts and blockers
+- Spawns `.agent/agent-once` for schedulable issues
+- Requires `gh`, `jq`, and `opencode`
+- Exit code `0` means all child issues are complete or it was a dry run
+- Exit code `1` means failed child issues remain open
+- Exit code `2` means child issues are still in progress elsewhere
+- Exit code `3` means child issues remain open but none are schedulable
+
+### `install.sh`
+
+- Creates or updates the local `.agent/` command directory
+- Adds `.agent/progress.md` to `.gitignore`
+- Installs shared skills into `~/.agents/skills`
+- Runs in `bash`
+- Exit code `0` means install completed successfully
+- Exit code `1` means install prerequisites or required skill installation failed
 
 **Parallelism rules:**
 - Two issues can run in parallel if they have **zero file overlap**
@@ -96,23 +152,26 @@ The `parallel-agents` orchestrator:
 
 | File | Tracked? | Purpose |
 |------|----------|---------|
-| `.agent/agent` | Yes | The zsh loop runner (sequential mode) |
+| `.agent/agent` | Yes | The bash loop runner (sequential mode) |
+| `.agent/agent-once` | Yes | Single-issue worker with 3 retries (parallel mode) |
+| `.agent/parallel-agents` | Yes | Orchestrator that auto-detects parallelism (parallel mode) |
 | `.agent/prompt.md` | Yes | AI system prompt for sequential mode (edit per project) |
 | `.agent/agent-once-prompt.md` | Yes | AI system prompt for single issue (parallel mode) |
 | `.agent/progress.md` | No | Local log of what the agent did |
-| `agent-once` | Yes | Single-issue worker with 3 retries (parallel mode) |
-| `parallel-agents` | Yes | Orchestrator that auto-detects parallelism (parallel mode) |
 
 ## Requirements
 
 - [opencode](https://github.com/opencode-ai/opencode) CLI
 - [GitHub CLI](https://cli.github.com/)
-- zsh
+- [jq](https://jqlang.org/)
+- bash
 - A GitHub repository with issues enabled
 
 ## Skills
 
 The following skills are installed automatically:
+
+Shared skills are installed into `~/.agents/skills`. Project commands stay local under `.agent/`.
 
 ### write-prd
 Creates a PRD (Product Requirements Document) as a GitHub issue with:
