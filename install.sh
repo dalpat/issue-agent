@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
-REPO_ROOT="https://raw.githubusercontent.com/dalpat/issue-agent/main/template"
+TEMPLATE_ROOT="https://raw.githubusercontent.com/dalpat/issue-agent/main/template"
+SKILLS_ROOT="https://raw.githubusercontent.com/dalpat/issue-agent/main/skills"
 
 if [ ! -d ".git" ]; then
   echo "Warning: No .git directory found. Installing anyway."
@@ -18,21 +19,21 @@ if [ -f "$(dirname "$0")/template/agent" ]; then
   
   # Parallel agent files (optional)
   if [ -f "$TEMPLATE_DIR/agent-once" ]; then
-    cp "$TEMPLATE_DIR/agent-once" agent-once
-    cp "$TEMPLATE_DIR/parallel-agents" parallel-agents
+    cp "$TEMPLATE_DIR/agent-once" .agent/agent-once
+    cp "$TEMPLATE_DIR/parallel-agents" .agent/parallel-agents
     cp "$TEMPLATE_DIR/agent-once-prompt.md" .agent/agent-once-prompt.md
-    chmod +x agent-once parallel-agents
+    chmod +x .agent/agent-once .agent/parallel-agents
   fi
 else
-  curl -fsSL "$REPO_ROOT/agent" -o .agent/agent
-  curl -fsSL "$REPO_ROOT/prompt.md" -o .agent/prompt.md
-  curl -fsSL "$REPO_ROOT/.gitignore" -o .agent/.gitignore
+  curl -fsSL "$TEMPLATE_ROOT/agent" -o .agent/agent
+  curl -fsSL "$TEMPLATE_ROOT/prompt.md" -o .agent/prompt.md
+  curl -fsSL "$TEMPLATE_ROOT/.gitignore" -o .agent/.gitignore
   
   # Parallel agent files (optional)
-  if curl -fsSL "$REPO_ROOT/agent-once" -o agent-once 2>/dev/null; then
-    curl -fsSL "$REPO_ROOT/parallel-agents" -o parallel-agents
-    curl -fsSL "$REPO_ROOT/agent-once-prompt.md" -o .agent/agent-once-prompt.md
-    chmod +x agent-once parallel-agents
+  if curl -fsSL "$TEMPLATE_ROOT/agent-once" -o .agent/agent-once 2>/dev/null; then
+    curl -fsSL "$TEMPLATE_ROOT/parallel-agents" -o .agent/parallel-agents
+    curl -fsSL "$TEMPLATE_ROOT/agent-once-prompt.md" -o .agent/agent-once-prompt.md
+    chmod +x .agent/agent-once .agent/parallel-agents
   fi
 fi
 
@@ -41,6 +42,8 @@ touch .agent/progress.md
 
 # Install skills (required for parallel mode)
 SKILLS_DIR="$HOME/.agents/skills"
+installed_skills=()
+failed_skills=()
 if [ -d "$(dirname "$0")/template" ] && [ -d "$(dirname "$0")/skills" ]; then
   SKILLS_SOURCE="$(dirname "$0")/skills"
   mkdir -p "$SKILLS_DIR"
@@ -49,6 +52,7 @@ if [ -d "$(dirname "$0")/template" ] && [ -d "$(dirname "$0")/skills" ]; then
     if [ -f "$skill_dir/SKILL.md" ]; then
       mkdir -p "$SKILLS_DIR/$skill_name"
       cp "$skill_dir/SKILL.md" "$SKILLS_DIR/$skill_name/"
+      installed_skills+=("$skill_name")
       echo "Installed skill: $skill_name"
     fi
   done
@@ -56,8 +60,11 @@ else
   # Download skills from repo
   for skill in write-prd to-issues; do
     mkdir -p "$SKILLS_DIR/$skill"
-    if curl -fsSL "$REPO_ROOT/skills/$skill/SKILL.md" -o "$SKILLS_DIR/$skill/SKILL.md" 2>/dev/null; then
+    if curl -fsSL "$SKILLS_ROOT/$skill/SKILL.md" -o "$SKILLS_DIR/$skill/SKILL.md" 2>/dev/null; then
+      installed_skills+=("$skill")
       echo "Installed skill: $skill"
+    else
+      failed_skills+=("$skill")
     fi
   done
 fi
@@ -72,10 +79,22 @@ else
   echo "Created .gitignore"
 fi
 
+if [ ${#failed_skills[@]} -gt 0 ]; then
+  echo "Error: Failed to install required skills: ${failed_skills[*]}" >&2
+  exit 1
+fi
+
 echo ""
 echo "issue-agent installed."
 echo ""
+echo "Project commands live under: .agent/"
 echo "Sequential mode: Edit .agent/prompt.md, then run: .agent/agent 10"
-echo "Parallel mode:   Use write-prd + to-issues skills, then run: ./parallel-agents --dry-run"
+echo "Single issue:    Run .agent/agent-once <issue-number>"
+echo "Parallel mode:   Use write-prd + to-issues skills, then run: .agent/parallel-agents --dry-run"
 echo ""
-echo "Installed skills: write-prd, to-issues"
+echo "Shared skills install to: $SKILLS_DIR"
+if [ ${#installed_skills[@]} -gt 0 ]; then
+  echo "Installed skills: ${installed_skills[*]}"
+else
+  echo "Installed skills: none"
+fi
