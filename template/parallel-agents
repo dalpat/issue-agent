@@ -1,9 +1,54 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 
 set -e
 
-script_dir="${0:A:h}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 agent_once="${script_dir}/agent-once"
+final_state=""
+final_details=""
+
+require_cmd() {
+  local cmd="$1"
+  local hint="$2"
+
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: Missing required command '$cmd'. $hint" >&2
+    exit 1
+  fi
+}
+
+format_issue_list() {
+  local issues="$1"
+  echo "$issues" | tr '\n' ' ' | xargs 2>/dev/null || true
+}
+
+open_child_issues_json() {
+  gh issue list --state open --json number,title,labels --limit 100 | jq '
+    [
+      .[] |
+      select(
+        (.labels | map(.name) |
+          (contains(["PRD"]) or contains(["epic"]) or contains(["parent"])) | not
+        )
+      )
+    ]
+  '
+}
+
+issue_numbers_with_label() {
+  local issues_json="$1"
+  local label="$2"
+
+  echo "$issues_json" | jq -r --arg label "$label" '
+    .[] |
+    select(.labels | map(.name) | contains([$label])) |
+    .number
+  '
+}
+
+require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/parallel-agents."
+require_cmd jq "Install jq before running .agent/parallel-agents."
+require_cmd opencode "Install the opencode CLI before running .agent/parallel-agents."
 
 # Parse command line args
 dry_run=false
@@ -64,26 +109,21 @@ is_blocked() {
 files_overlap() {
   local files1="$1"
   local files2="$2"
-  
-  # Split on whitespace (handles both spaces and newlines)
-  local -a arr1=(${=files1})
-  local -a arr2=(${=files2})
-  
-  for f1 in $arr1; do
-    # Trim whitespace
-    f1=$(echo "$f1" | xargs)
-    [ -z "$f1" ] && continue
-    
-    for f2 in $arr2; do
-      f2=$(echo "$f2" | xargs)
-      [ -z "$f2" ] && continue
-      
-      if [ "$f1" = "$f2" ]; then
-        return 0  # true, overlap
-      fi
-    done
-  done
-  
+  local -A seen_files=()
+  local file_path=""
+
+  while IFS= read -r file_path; do
+    [ -z "$file_path" ] && continue
+    seen_files["$file_path"]=1
+  done <<< "$files1"
+
+  while IFS= read -r file_path; do
+    [ -z "$file_path" ] && continue
+    if [ "${seen_files[$file_path]:-}" = "1" ]; then
+      return 0  # true, overlap
+    fi
+  done <<< "$files2"
+
   return 1  # false, no overlap
 }
 
@@ -94,24 +134,42 @@ while true; do
   echo "Iteration $iteration"
   echo "========================================"
   
-  # Fetch all open issues (exclude parent PRD)
+  # Fetch all open child issues (exclude parent PRD)
   echo "Fetching open issues..."
-  issues_json=$(gh issue list --state open --json number,title,labels --limit 100)
+  issues_json=$(open_child_issues_json)
+  open_issue_count=$(echo "$issues_json" | jq 'length')
+  failed_issues=$(issue_numbers_with_label "$issues_json" "failed")
+  in_progress_issues=$(issue_numbers_with_label "$issues_json" "in-progress")
   
-  # Filter out parent PRD and issues with in-progress/completed labels
+  # Filter out parent PRD and issues with terminal or active labels
   available_issues=$(echo "$issues_json" | jq -r '
     .[] | 
     select(
       (.labels | map(.name) | 
-        (contains(["PRD"]) or contains(["epic"]) or contains(["parent"])) | not) and
-      (.labels | map(.name) | 
-        (contains(["in-progress"]) or contains(["completed"])) | not)
+        (contains(["in-progress"]) or contains(["completed"]) or contains(["failed"])) | not)
     ) | 
     .number
   ')
   
+  if [ "$open_issue_count" -eq 0 ]; then
+    final_state="complete"
+    break
+  fi
+
   if [ -z "$available_issues" ]; then
-    echo "No more available issues. Done!"
+    if [ -n "$failed_issues" ]; then
+      final_state="failed"
+      final_details=$(format_issue_list "$failed_issues")
+      echo "No schedulable issues remain. Failed issues still open: $final_details"
+    elif [ -n "$in_progress_issues" ]; then
+      final_state="in-progress"
+      final_details=$(format_issue_list "$in_progress_issues")
+      echo "No schedulable issues remain. In-progress issues still open: $final_details"
+    else
+      final_state="blocked"
+      final_details=$(format_issue_list "$(echo "$issues_json" | jq -r '.[].number')")
+      echo "No schedulable issues remain. Open child issues are blocked or waiting on dependencies: $final_details"
+    fi
     break
   fi
   
@@ -121,11 +179,14 @@ while true; do
   # Build file map for each issue
   declare -A issue_files
   declare -A issue_blocked
-  
-  # Convert newline-separated string to array
-  issues_array=(${(f)available_issues})
-  
-  for issue in $issues_array; do
+  issues_array=()
+
+  while IFS= read -r issue; do
+    [ -z "$issue" ] && continue
+    issues_array+=("$issue")
+  done <<< "$available_issues"
+
+  for issue in "${issues_array[@]}"; do
     echo "Analyzing issue #$issue..."
     
     # Fetch issue body separately to avoid JSON parsing issues
@@ -139,15 +200,15 @@ while true; do
     # Parse files
     existing_files=$(parse_files "$issue_body" "Existing files to modify")
     new_files=$(parse_files "$issue_body" "New files")
-    all_files="$existing_files $new_files"
-    issue_files[$issue]="$all_files"
+    all_files=$(printf '%s\n%s\n' "$existing_files" "$new_files" | awk 'NF')
+    issue_files["$issue"]="$all_files"
     
     # Check if blocked
     if is_blocked "$issue_body"; then
-      issue_blocked[$issue]=1
+      issue_blocked["$issue"]=1
       echo "  Issue #$issue is blocked"
     else
-      issue_blocked[$issue]=0
+      issue_blocked["$issue"]=0
       echo "  Issue #$issue is ready"
       echo "  Files: $all_files"
     fi
@@ -158,16 +219,16 @@ while true; do
   
   # Find issues that can run in parallel
   parallel_issues=()
-  for issue in $issues_array; do
+  for issue in "${issues_array[@]}"; do
     # Skip if blocked
-    if [ "${issue_blocked[$issue]}" = "1" ]; then
+    if [ "${issue_blocked[$issue]:-0}" = "1" ]; then
       continue
     fi
     
     # Check if this issue conflicts with any already selected
     conflict=false
-    for selected in $parallel_issues; do
-      if files_overlap "${issue_files[$issue]}" "${issue_files[$selected]}"; then
+    for selected in "${parallel_issues[@]}"; do
+      if files_overlap "${issue_files[$issue]:-}" "${issue_files[$selected]:-}"; then
         echo "  Issue #$issue conflicts with #$selected (shared files)"
         conflict=true
         break
@@ -175,39 +236,43 @@ while true; do
     done
     
     if ! $conflict; then
-      parallel_issues+=($issue)
+      parallel_issues+=("$issue")
       echo "  Issue #$issue can run in parallel"
     fi
   done
   
   if [ ${#parallel_issues[@]} -eq 0 ]; then
-    echo "No parallel issues found. Possible deadlock or all issues blocked."
+    final_state="blocked"
+    final_details=$(format_issue_list "$available_issues")
+    echo "No parallel issues found. Open child issues are blocked or conflict with each other: $final_details"
     break
   fi
   
   echo ""
-  echo "Running ${#parallel_issues[@]} issue(s) in parallel: ${parallel_issues[@]}"
+  echo "Running ${#parallel_issues[@]} issue(s) in parallel: ${parallel_issues[*]}"
   
   if $dry_run; then
-    echo "[DRY RUN] Would spawn agents for: ${parallel_issues[@]}"
+    echo "[DRY RUN] Would spawn agents for: ${parallel_issues[*]}"
     echo ""
     echo "Dry run complete. Exiting."
+    final_state="dry-run"
+    final_details="${parallel_issues[*]}"
     break
   fi
   
   # Spawn agents in parallel
   pids=()
-  for issue in $parallel_issues; do
+  for issue in "${parallel_issues[@]}"; do
     echo "  Spawning agent for issue #$issue"
     "$agent_once" "$issue" &
-    pids+=($!)
+    pids+=("$!")
   done
   
   # Wait for all agents to complete
   echo ""
   echo "Waiting for ${#pids[@]} agent(s) to complete..."
   failed=0
-  for pid in $pids; do
+  for pid in "${pids[@]}"; do
     if ! wait "$pid"; then
       echo "  Agent failed (pid $pid)"
       failed=$((failed + 1))
@@ -224,6 +289,32 @@ done
 
 echo ""
 echo "========================================"
-echo "All issues complete!"
+case "$final_state" in
+  complete)
+    echo "All child issues complete!"
+    exit_code=0
+    ;;
+  dry-run)
+    echo "Dry run complete. Ready issues: ${final_details}"
+    exit_code=0
+    ;;
+  failed)
+    echo "Open failed child issues remain: ${final_details}"
+    exit_code=1
+    ;;
+  in-progress)
+    echo "Open in-progress child issues remain: ${final_details}"
+    exit_code=2
+    ;;
+  blocked)
+    echo "Open child issues remain but none are schedulable: ${final_details}"
+    exit_code=3
+    ;;
+  *)
+    echo "Finished with unknown state."
+    exit_code=1
+    ;;
+esac
 echo "Finished: $(date '+%H:%M:%S')"
 echo "========================================"
+exit "$exit_code"
