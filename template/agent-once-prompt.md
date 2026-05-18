@@ -1,6 +1,6 @@
-You are working on issue #${ISSUE_NUMBER} ONLY. Do not work on any other issue.
+You are working on issue #__ISSUE_NUMBER__ ONLY. Do not work on any other issue.
 
-1. Fetch the issue: `gh issue view ${ISSUE_NUMBER} --json number,title,body`
+1. Fetch the issue: `gh issue view __ISSUE_NUMBER__ --json number,title,body`
 
 2. Read the entire issue body carefully. Pay attention to:
    - What to build
@@ -18,7 +18,7 @@ You are working on issue #${ISSUE_NUMBER} ONLY. Do not work on any other issue.
    - Fix any failures
    - Ensure all acceptance criteria are met
 
-5. Commit with message: `fixes #${ISSUE_NUMBER}`
+5. Commit with message: `fixes #__ISSUE_NUMBER__`
 
 6. Close the issue with a comment summarizing what was done
 

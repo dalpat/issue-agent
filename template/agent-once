@@ -1,10 +1,23 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 
 set -e
 
-script_dir="${0:A:h}"
-prompt="${script_dir}/.agent/agent-once-prompt.md"
-progress="${script_dir}/.agent/progress.md"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+prompt_template="${script_dir}/agent-once-prompt.md"
+progress="${script_dir}/progress.md"
+
+require_cmd() {
+  local cmd="$1"
+  local hint="$2"
+
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: Missing required command '$cmd'. $hint" >&2
+    exit 1
+  fi
+}
+
+require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/agent-once."
+require_cmd opencode "Install the opencode CLI before running .agent/agent-once."
 
 if [ -z "$1" ]; then
   echo "Usage: $0 <issue-number>"
@@ -13,6 +26,14 @@ fi
 
 issue="$1"
 max_retries=3
+rendered_prompt=$(mktemp)
+
+cleanup() {
+  rm -f "$rendered_prompt"
+}
+trap cleanup EXIT
+
+sed "s/__ISSUE_NUMBER__/$issue/g" "$prompt_template" > "$rendered_prompt"
 
 echo "=== Agent-Once: Issue #$issue ==="
 echo "Started: $(date '+%H:%M:%S')"
@@ -31,8 +52,8 @@ for ((retry=1; retry<=max_retries; retry++)); do
   echo "--- Attempt $retry/$max_retries ---"
   
   tmpfile=$(mktemp)
-  ISSUE_NUMBER="$issue" cat "$prompt" | opencode run -f "$progress" --dangerously-skip-permissions 2>&1 | tee "$tmpfile"
-  run_exit=${pipestatus[1]}
+  opencode run -f "$progress" --dangerously-skip-permissions < "$rendered_prompt" 2>&1 | tee "$tmpfile"
+  run_exit=${PIPESTATUS[0]}
   result=$(cat "$tmpfile")
   rm -f "$tmpfile"
   
