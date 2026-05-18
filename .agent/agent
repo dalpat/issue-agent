@@ -1,10 +1,23 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 
 set -e
 
-script_dir="${0:A:h}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 prompt="${script_dir}/prompt.md"
 progress="${script_dir}/progress.md"
+
+require_cmd() {
+  local cmd="$1"
+  local hint="$2"
+
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: Missing required command '$cmd'. $hint" >&2
+    exit 1
+  fi
+}
+
+require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/agent."
+require_cmd opencode "Install the opencode CLI before running .agent/agent."
 
 if [ -z "$1" ]; then
   echo "Usage: $0 <iterations>"
@@ -30,8 +43,8 @@ while [ $i -le $max ]; do
   echo "--- [$elapsed] Iteration $i/$max ---"
 
   tmpfile=$(mktemp)
-  cat "$prompt" | opencode run -f "$progress" --dangerously-skip-permissions 2>&1 | tee "$tmpfile"
-  run_exit=${pipestatus[1]}
+  opencode run -f "$progress" --dangerously-skip-permissions < "$prompt" 2>&1 | tee "$tmpfile"
+  run_exit=${PIPESTATUS[0]}
   result=$(cat "$tmpfile")
   rm -f "$tmpfile"
 
