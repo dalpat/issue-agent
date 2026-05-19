@@ -141,11 +141,13 @@ List **ALL** new files that will be created (include tests):
 
 ## Can work parallely
 
-Yes - this slice has no file overlap with slices #X, #Y, #Z.
+Yes - this slice has no file overlap with issues #X, #Y, #Z.
 
 Or:
 
-No - this slice shares files with slice #X (both modify `path/to/file.js`).
+No - this slice shares files with issue #X (both modify `path/to/file.js`).
+
+**Note:** After creating all issues, update this section to use the **actual GitHub issue numbers**. Never use abstract identifiers like "slice #1" or "track A".
 
 </issue-template>
 
