@@ -7,6 +7,49 @@ agent_once="${script_dir}/agent-once"
 final_state=""
 final_details=""
 
+# Maximum seconds to allow a single agent-once run; override via AGENT_TIMEOUT env var
+AGENT_TIMEOUT="${AGENT_TIMEOUT:-3600}"
+
+show_version() {
+  local version_file="${script_dir}/VERSION"
+  if [ -f "$version_file" ]; then
+    echo "issue-agent $(cat "$version_file")"
+  else
+    echo "issue-agent (version unknown)"
+  fi
+}
+
+show_help() {
+  show_version
+  echo ""
+  echo "Usage: $0 [--dry-run]"
+  echo ""
+  echo "Orchestrate parallel issue resolution. Auto-detects which issues"
+  echo "can run simultaneously based on file overlap and blocker dependencies."
+  echo ""
+  echo "Options:"
+  echo "  --dry-run       Show what would run without spawning agents"
+  echo "  --help          Show this help message"
+  echo "  --version       Show version number"
+  echo ""
+  echo "Environment variables:"
+  echo "  AGENT_TIMEOUT   Max seconds per agent-once run (default: 3600)"
+  echo ""
+  echo "Exit codes:"
+  echo "  0  All issues complete or dry run finished"
+  echo "  1  Failed issues remain open"
+  echo "  2  Issues still in progress elsewhere"
+  echo "  3  Issues remain but none are schedulable"
+}
+
+# Handle --help and --version before requiring external commands
+for arg in "$@"; do
+  case "$arg" in
+    --version) show_version; exit 0 ;;
+    --help)    show_help; exit 0 ;;
+  esac
+done
+
 require_cmd() {
   local cmd="$1"
   local hint="$2"
@@ -80,6 +123,7 @@ parse_files() {
 }
 
 # Helper: Check if issue is blocked
+# Reads from global __ia_issue_states (populated once per iteration)
 is_blocked() {
   local issue_body="$1"
   
@@ -96,7 +140,7 @@ is_blocked() {
   ')
   
   for blocker in $blockers; do
-    local blocker_state=$(gh issue view "$blocker" --json state --jq '.state' 2>/dev/null || echo "unknown")
+    local blocker_state="${__ia_issue_states[$blocker]:-unknown}"
     if [ "$blocker_state" != "closed" ]; then
       return 0  # true, is blocked
     fi
@@ -140,6 +184,14 @@ while true; do
   open_issue_count=$(echo "$issues_json" | jq 'length')
   failed_issues=$(issue_numbers_with_label "$issues_json" "failed")
   in_progress_issues=$(issue_numbers_with_label "$issues_json" "in-progress")
+
+  # Cache all issue states in one bulk fetch to avoid N+1 API calls in is_blocked()
+  unset __ia_issue_states
+  declare -A __ia_issue_states
+  while IFS=$'\t' read -r num state; do
+    [ -z "$num" ] && continue
+    __ia_issue_states["$num"]="$state"
+  done < <(gh issue list --state all --limit 200 --json number,state 2>/dev/null | jq -r '.[] | [(.number | tostring), .state] | @tsv')
   
   # Filter out parent PRD and issues with terminal or active labels
   available_issues=$(echo "$issues_json" | jq -r '
@@ -177,6 +229,7 @@ while true; do
   echo ""
   
   # Build file map for each issue
+  unset issue_files issue_blocked
   declare -A issue_files
   declare -A issue_blocked
   issues_array=()
@@ -260,11 +313,11 @@ while true; do
     break
   fi
   
-  # Spawn agents in parallel
+  # Spawn agents in parallel (each capped at AGENT_TIMEOUT seconds)
   pids=()
   for issue in "${parallel_issues[@]}"; do
-    echo "  Spawning agent for issue #$issue"
-    "$agent_once" "$issue" &
+    echo "  Spawning agent for issue #$issue (timeout: ${AGENT_TIMEOUT}s)"
+    timeout "$AGENT_TIMEOUT" "$agent_once" "$issue" &
     pids+=("$!")
   done
   

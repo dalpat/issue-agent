@@ -6,6 +6,40 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 prompt="${script_dir}/prompt.md"
 progress="${script_dir}/progress.md"
 
+show_version() {
+  local version_file="${script_dir}/VERSION"
+  if [ -f "$version_file" ]; then
+    echo "issue-agent $(cat "$version_file")"
+  else
+    echo "issue-agent (version unknown)"
+  fi
+}
+
+show_help() {
+  show_version
+  echo ""
+  echo "Usage: $0 <iterations>"
+  echo ""
+  echo "Run the sequential agent loop, picking and implementing one GitHub"
+  echo "issue per iteration. Stops early if the AI signals completion."
+  echo ""
+  echo "Arguments:"
+  echo "  <iterations>    Maximum number of iterations to run"
+  echo ""
+  echo "Options:"
+  echo "  --help          Show this help message"
+  echo "  --version       Show version number"
+  echo ""
+  echo "Exit codes:"
+  echo "  0  Loop finished normally or AI signaled completion"
+  echo "  1  Missing required command or invalid arguments"
+}
+
+case "${1:-}" in
+  --version) show_version; exit 0 ;;
+  --help)    show_help; exit 0 ;;
+esac
+
 require_cmd() {
   local cmd="$1"
   local hint="$2"
@@ -38,13 +72,29 @@ fmt_elapsed() {
 echo "Agent loop: up to $max iterations | started $(date '+%H:%M:%S')"
 echo ""
 
+# One-time cleanup: remove 'picked by agent' labels stuck from prior crashes
+stuck_issues=$(gh issue list --label "picked by agent" --json number --jq '.[].number' 2>/dev/null || true)
+if [ -n "$stuck_issues" ]; then
+  echo "Cleaning up stuck 'picked by agent' labels..."
+  for stuck in $stuck_issues; do
+    gh issue edit "$stuck" --remove-label "picked by agent" 2>/dev/null || true
+    echo "  Removed from issue #$stuck"
+  done
+  echo ""
+fi
+
 while [ $i -le $max ]; do
   elapsed=$(fmt_elapsed $((SECONDS - start)))
   echo "--- [$elapsed] Iteration $i/$max ---"
 
+  echo "" >> "$progress"
+  echo "## Iteration $i — $(date '+%Y-%m-%d %H:%M:%S')" >> "$progress"
+
   tmpfile=$(mktemp)
+  set +e
   opencode run -f "$progress" --dangerously-skip-permissions < "$prompt" 2>&1 | tee "$tmpfile"
   run_exit=${PIPESTATUS[0]}
+  set -e
   result=$(cat "$tmpfile")
   rm -f "$tmpfile"
 

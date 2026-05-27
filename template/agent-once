@@ -6,6 +6,40 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 prompt_template="${script_dir}/agent-once-prompt.md"
 progress="${script_dir}/progress.md"
 
+show_version() {
+  local version_file="${script_dir}/VERSION"
+  if [ -f "$version_file" ]; then
+    echo "issue-agent $(cat "$version_file")"
+  else
+    echo "issue-agent (version unknown)"
+  fi
+}
+
+show_help() {
+  show_version
+  echo ""
+  echo "Usage: $0 <issue-number>"
+  echo ""
+  echo "Work on exactly one GitHub issue. Retries up to 3 times on failure."
+  echo "Manages issue labels automatically (in-progress → completed/failed)."
+  echo ""
+  echo "Arguments:"
+  echo "  <issue-number>  GitHub issue number to work on"
+  echo ""
+  echo "Options:"
+  echo "  --help          Show this help message"
+  echo "  --version       Show version number"
+  echo ""
+  echo "Exit codes:"
+  echo "  0  Issue completed successfully"
+  echo "  1  Issue failed after 3 retries"
+}
+
+case "${1:-}" in
+  --version) show_version; exit 0 ;;
+  --help)    show_help; exit 0 ;;
+esac
+
 require_cmd() {
   local cmd="$1"
   local hint="$2"
@@ -52,8 +86,10 @@ for ((retry=1; retry<=max_retries; retry++)); do
   echo "--- Attempt $retry/$max_retries ---"
   
   tmpfile=$(mktemp)
+  set +e
   opencode run -f "$progress" --dangerously-skip-permissions < "$rendered_prompt" 2>&1 | tee "$tmpfile"
   run_exit=${PIPESTATUS[0]}
+  set -e
   result=$(cat "$tmpfile")
   rm -f "$tmpfile"
   
