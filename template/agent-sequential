@@ -3,7 +3,7 @@
 set -e
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-prompt="${script_dir}/prompt.md"
+prompt="${script_dir}/agent-prompt.md"
 progress="${script_dir}/progress.md"
 
 show_version() {
@@ -50,8 +50,8 @@ require_cmd() {
   fi
 }
 
-require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/agent."
-require_cmd opencode "Install the opencode CLI before running .agent/agent."
+require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/agent-sequential."
+require_cmd opencode "Install the opencode CLI before running .agent/agent-sequential."
 
 if [ -z "$1" ]; then
   echo "Usage: $0 <iterations>"

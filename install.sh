@@ -22,10 +22,10 @@ safe_copy() {
 }
 
 # If running from a clone of issue-agent, use local templates
-if [ -f "$(dirname "$0")/template/agent" ]; then
+if [ -f "$(dirname "$0")/template/agent-sequential" ]; then
   TEMPLATE_DIR="$(dirname "$0")/template"
-  cp "$TEMPLATE_DIR/agent" .agent/agent
-  safe_copy "$TEMPLATE_DIR/prompt.md" .agent/prompt.md
+  cp "$TEMPLATE_DIR/agent-sequential" .agent/agent-sequential
+  safe_copy "$TEMPLATE_DIR/agent-prompt.md" .agent/agent-prompt.md
   cp "$TEMPLATE_DIR/.gitignore" .agent/.gitignore
   
   # Install VERSION
@@ -36,17 +36,17 @@ if [ -f "$(dirname "$0")/template/agent" ]; then
   # Parallel agent files (optional)
   if [ -f "$TEMPLATE_DIR/agent-once" ]; then
     cp "$TEMPLATE_DIR/agent-once" .agent/agent-once
-    cp "$TEMPLATE_DIR/parallel-agents" .agent/parallel-agents
+    cp "$TEMPLATE_DIR/agent-parallel" .agent/agent-parallel
     safe_copy "$TEMPLATE_DIR/agent-once-prompt.md" .agent/agent-once-prompt.md
-    chmod +x .agent/agent-once .agent/parallel-agents
+    chmod +x .agent/agent-once .agent/agent-parallel
   fi
 else
-  curl -fsSL "$TEMPLATE_ROOT/agent" -o .agent/agent
+  curl -fsSL "$TEMPLATE_ROOT/agent-sequential" -o .agent/agent-sequential
   
-  # Download prompt.md to a temp file first, then safe_copy
+  # Download agent-prompt.md to a temp file first, then safe_copy
   prompt_tmp=$(mktemp)
-  curl -fsSL "$TEMPLATE_ROOT/prompt.md" -o "$prompt_tmp"
-  safe_copy "$prompt_tmp" .agent/prompt.md
+  curl -fsSL "$TEMPLATE_ROOT/agent-prompt.md" -o "$prompt_tmp"
+  safe_copy "$prompt_tmp" .agent/agent-prompt.md
   rm -f "$prompt_tmp"
   
   curl -fsSL "$TEMPLATE_ROOT/.gitignore" -o .agent/.gitignore
@@ -56,25 +56,25 @@ else
   
   # Parallel agent files (optional, all-or-nothing)
   if curl -fsSL "$TEMPLATE_ROOT/agent-once" -o .agent/agent-once 2>/dev/null; then
-    if curl -fsSL "$TEMPLATE_ROOT/parallel-agents" -o .agent/parallel-agents 2>/dev/null; then
+    if curl -fsSL "$TEMPLATE_ROOT/agent-parallel" -o .agent/agent-parallel 2>/dev/null; then
       prompt_once_tmp=$(mktemp)
       if curl -fsSL "$TEMPLATE_ROOT/agent-once-prompt.md" -o "$prompt_once_tmp" 2>/dev/null; then
         safe_copy "$prompt_once_tmp" .agent/agent-once-prompt.md
         rm -f "$prompt_once_tmp"
-        chmod +x .agent/agent-once .agent/parallel-agents
+        chmod +x .agent/agent-once .agent/agent-parallel
       else
         rm -f "$prompt_once_tmp"
         echo "Warning: Partial download of parallel agent files. Cleaning up." >&2
-        rm -f .agent/agent-once .agent/parallel-agents .agent/agent-once-prompt.md
+        rm -f .agent/agent-once .agent/agent-parallel .agent/agent-once-prompt.md
       fi
     else
       echo "Warning: Partial download of parallel agent files. Cleaning up." >&2
-      rm -f .agent/agent-once .agent/parallel-agents .agent/agent-once-prompt.md
+      rm -f .agent/agent-once .agent/agent-parallel .agent/agent-once-prompt.md
     fi
   fi
 fi
 
-chmod +x .agent/agent
+chmod +x .agent/agent-sequential
 touch .agent/progress.md
 
 # Install skills (required for parallel mode)
@@ -125,9 +125,9 @@ echo ""
 echo "issue-agent installed."
 echo ""
 echo "Project commands live under: .agent/"
-echo "Sequential mode: Edit .agent/prompt.md, then run: .agent/agent 10"
+echo "Sequential mode: Edit .agent/agent-prompt.md, then run: .agent/agent-sequential 10"
 echo "Single issue:    Run .agent/agent-once <issue-number>"
-echo "Parallel mode:   Use write-prd + to-issues skills, then run: .agent/parallel-agents --dry-run"
+echo "Parallel mode:   Use write-prd + to-issues skills, then run: .agent/agent-parallel --dry-run"
 echo ""
 echo "Shared skills install to: $SKILLS_DIR"
 if [ ${#installed_skills[@]} -gt 0 ]; then

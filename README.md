@@ -32,21 +32,21 @@ Run this in the root of your project
 curl -fsSL https://raw.githubusercontent.com/dalpat/issue-agent/main/install.sh | bash
 ```
 
-> **Note:** If your `prompt.md` or `agent-once-prompt.md` has been customized, the installer automatically backs it up to `prompt.md.bak` before overwriting.
+> **Note:** If your `agent-prompt.md` or `agent-once-prompt.md` has been customized, the installer automatically backs it up to `agent-prompt.md.bak` before overwriting.
 
 ## What it does
 
 1. Creates a `.agent/` directory inside your project
 2. Copies all project commands into `.agent/`
 3. Adds `.agent/progress.md` to `.gitignore`
-4. You edit `.agent/prompt.md` to match your project
+4. You edit `.agent/agent-prompt.md` to match your project
 
 ## Run
 
 ### Sequential mode (default)
 
 ```bash
-.agent/agent 10
+.agent/agent-sequential 10
 ```
 
 Runs up to 10 iterations, picking and implementing one issue at a time. Stops early if the AI signals completion with `<promise>COMPLETE</promise>`.
@@ -54,7 +54,7 @@ Runs up to 10 iterations, picking and implementing one issue at a time. Stops ea
 ### Parallel mode (opt-in)
 
 ```bash
-.agent/parallel-agents
+.agent/agent-parallel
 ```
 
 Auto-detects which issues can run in parallel by parsing file dependencies from issue bodies. Spawns multiple agents simultaneously for non-conflicting issues.
@@ -67,10 +67,10 @@ Auto-detects which issues can run in parallel by parsing file dependencies from 
 
 **Dry-run (see what would happen):**
 ```bash
-.agent/parallel-agents --dry-run
+.agent/agent-parallel --dry-run
 ```
 
-`.agent/parallel-agents` validates `gh`, `jq`, and `opencode` before it starts scheduling work.
+`.agent/agent-parallel` validates `gh`, `jq`, and `opencode` before it starts scheduling work.
 
 ### Single-Issue mode
 
@@ -84,23 +84,23 @@ Runs exactly one issue. It validates `gh` and `opencode` before it starts.
 
 ### Sequential mode (simple)
 - [ ] Install: `curl ... | bash`
-- [ ] Edit `.agent/prompt.md` (labels, branch rules, test commands, etc.)
+- [ ] Edit `.agent/agent-prompt.md` (labels, branch rules, test commands, etc.)
 - [ ] Ensure `gh` CLI is authenticated
 - [ ] Ensure `opencode` CLI is installed
-- [ ] Run `.agent/agent 10`
+- [ ] Run `.agent/agent-sequential 10`
 
 ### Parallel mode (advanced)
 - [ ] Install: `curl ... | bash`
-- [ ] Edit `.agent/prompt.md` for sequential fallback
+- [ ] Edit `.agent/agent-prompt.md` for sequential fallback
 - [ ] Ensure issues have proper format (use `to-issues` skill)
 - [ ] Each issue must list "## Existing files to modify" and "## New files"
 - [ ] Each issue must list "## Blocked by" dependencies
-- [ ] Run `.agent/parallel-agents --dry-run` to verify
-- [ ] Run `.agent/parallel-agents` to execute
+- [ ] Run `.agent/agent-parallel --dry-run` to verify
+- [ ] Run `.agent/agent-parallel` to execute
 
 ## How parallel mode works
 
-The `.agent/parallel-agents` orchestrator:
+The `.agent/agent-parallel` orchestrator:
 1. Fetches all open issues
 2. Parses "## Existing files to modify" and "## New files" sections
 3. Parses "## Blocked by" section to check dependencies
@@ -113,9 +113,9 @@ Each `.agent/agent-once` run renders a concrete single-issue prompt before invok
 
 ## Command Contracts
 
-### `.agent/agent <iterations>`
+### `.agent/agent-sequential <iterations>`
 
-- Reads `.agent/prompt.md`
+- Reads `.agent/agent-prompt.md`
 - Appends to `.agent/progress.md`
 - Runs the sequential issue loop
 - Requires `gh` and `opencode`
@@ -132,7 +132,7 @@ Each `.agent/agent-once` run renders a concrete single-issue prompt before invok
 - Exit code `0` means the issue completed
 - Exit code `1` means the issue failed after retries
 
-### `.agent/parallel-agents`
+### `.agent/agent-parallel`
 
 - Scans open child issues
 - Reads issue bodies to detect file conflicts and blockers
@@ -199,10 +199,10 @@ The bash wrapper (`agent-once`) owns all label transitions. The AI must **not** 
 
 | File | Tracked? | Purpose |
 |------|----------|---------|
-| `.agent/agent` | Yes | The bash loop runner (sequential mode) |
+| `.agent/agent-sequential` | Yes | The bash loop runner (sequential mode) |
 | `.agent/agent-once` | Yes | Single-issue worker with 3 retries (parallel mode) |
-| `.agent/parallel-agents` | Yes | Orchestrator that auto-detects parallelism (parallel mode) |
-| `.agent/prompt.md` | Yes | AI system prompt for sequential mode (edit per project) |
+| `.agent/agent-parallel` | Yes | Orchestrator that auto-detects parallelism (parallel mode) |
+| `.agent/agent-prompt.md` | Yes | AI system prompt for sequential mode (edit per project) |
 | `.agent/agent-once-prompt.md` | Yes | AI system prompt for single issue (parallel mode) |
 | `.agent/VERSION` | Yes | Version of issue-agent installed |
 | `.agent/progress.md` | No | Local log of what the agent did |

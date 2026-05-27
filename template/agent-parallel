@@ -89,9 +89,9 @@ issue_numbers_with_label() {
   '
 }
 
-require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/parallel-agents."
-require_cmd jq "Install jq before running .agent/parallel-agents."
-require_cmd opencode "Install the opencode CLI before running .agent/parallel-agents."
+require_cmd gh "Install GitHub CLI and authenticate with 'gh auth login' before running .agent/agent-parallel."
+require_cmd jq "Install jq before running .agent/agent-parallel."
+require_cmd opencode "Install the opencode CLI before running .agent/agent-parallel."
 
 # Parse command line args
 dry_run=false
@@ -101,7 +101,7 @@ if [[ "$1" == "--dry-run" ]]; then
   echo ""
 fi
 
-echo "=== Parallel Agents ==="
+echo "=== Agent Parallel ==="
 echo "Started: $(date '+%H:%M:%S')"
 echo ""
 
