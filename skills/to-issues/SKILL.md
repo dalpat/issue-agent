@@ -60,7 +60,7 @@ Present the proposed breakdown as a numbered list. For each slice, show:
 - **User stories covered**: which user stories from the PRD this addresses
 - **Files to modify**: list of existing files this slice will modify (be exhaustive - include test files)
 - **New files**: list of new files this slice will create (be exhaustive - include test files)
-- **Can work parallely with**: list which other slices this can run in parallel with (zero file overlap)
+- **Can run in parallel with**: list which other slices this can run in parallel with (zero file overlap)
 
 **CRITICAL:** For each slice, explicitly verify:
 - ✅ Is this a **vertical slice** (cuts through all layers)?
@@ -139,7 +139,7 @@ List **ALL** new files that will be created (include tests):
 - `path/to/newfile1.js`
 - `path/to/newfile1.test.js`
 
-## Can work parallely
+## Can run in parallel
 
 Yes - this slice has no file overlap with issues #X, #Y, #Z.
 

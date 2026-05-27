@@ -20,6 +20,20 @@ cd /path/to/your-project
 
 The installer runs in `bash`, copies project-local commands into `.agent/`, installs shared skills into `~/.agents/skills`, and exits non-zero if required skills fail to install.
 
+## Upgrade
+
+Re-run `install.sh` to update `.agent/` scripts and shared skills to the latest version:
+
+`cd /path/to/your-project`
+
+Run this in the root of your project
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dalpat/issue-agent/main/install.sh | bash
+```
+
+> **Note:** If your `prompt.md` or `agent-once-prompt.md` has been customized, the installer automatically backs it up to `prompt.md.bak` before overwriting.
+
 ## What it does
 
 1. Creates a `.agent/` directory inside your project
@@ -148,6 +162,39 @@ Each `.agent/agent-once` run renders a concrete single-issue prompt before invok
 - `completed` - Agent finished successfully
 - `failed` - Agent failed after 3 retries
 
+## Issue Lifecycle
+
+The bash wrapper (`agent-once`) owns all label transitions. The AI must **not** close issues or change labels directly.
+
+```
+┌──────────┐   agent-once    ┌─────────────┐
+│  open    │ ──────────────► │ in-progress │
+└──────────┘   adds label    └──────┬──────┘
+                                    │
+                      ┌─────────────┴─────────────┐
+                      │                           │
+               AI signals COMPLETE          3 retries exhausted
+                      │                           │
+                      ▼                           ▼
+              ┌─────────────┐             ┌──────────┐
+              │  completed  │             │  failed  │
+              └─────────────┘             └──────────┘
+```
+
+**Who does what:**
+
+| Action | Actor | Mechanism |
+|--------|-------|-----------|
+| Add `in-progress` label | `agent-once` (bash) | Before first opencode run |
+| Implement the issue | AI (via opencode) | Reads prompt, writes code |
+| Commit with `fixes #N` | AI (via opencode) | May auto-close the issue on push |
+| Comment on the issue | AI (via opencode) | `gh issue comment` |
+| Add `completed` label | `agent-once` (bash) | After AI signals `COMPLETE` |
+| Add `failed` label | `agent-once` (bash) | After 3 retries exhausted |
+| Remove `in-progress` label | `agent-once` (bash) | On completion or failure |
+
+> **Important:** The AI is instructed to **not** close the issue or change labels. The `fixes #N` commit message may auto-close the issue on push, which is fine — the bash wrapper handles labels independently.
+
 ## Files
 
 | File | Tracked? | Purpose |
@@ -157,6 +204,7 @@ Each `.agent/agent-once` run renders a concrete single-issue prompt before invok
 | `.agent/parallel-agents` | Yes | Orchestrator that auto-detects parallelism (parallel mode) |
 | `.agent/prompt.md` | Yes | AI system prompt for sequential mode (edit per project) |
 | `.agent/agent-once-prompt.md` | Yes | AI system prompt for single issue (parallel mode) |
+| `.agent/VERSION` | Yes | Version of issue-agent installed |
 | `.agent/progress.md` | No | Local log of what the agent did |
 
 ## Requirements

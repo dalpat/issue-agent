@@ -20,7 +20,10 @@ You are working on issue #__ISSUE_NUMBER__ ONLY. Do not work on any other issue.
 
 5. Commit with message: `fixes #__ISSUE_NUMBER__`
 
-6. Close the issue with a comment summarizing what was done
+6. Leave a comment on the issue summarizing what was done:
+   `gh issue comment __ISSUE_NUMBER__ --body "..."`
+   Do NOT close the issue and do NOT change its labels.
+   The orchestrator handles closing and label transitions.
 
 7. Output `<promise>COMPLETE</promise>` when done
 

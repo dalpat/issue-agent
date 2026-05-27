@@ -10,30 +10,67 @@ fi
 
 mkdir -p .agent
 
+# Helper: copy a file with backup if the target exists and differs
+safe_copy() {
+  local src="$1"
+  local dst="$2"
+  if [ -f "$dst" ] && ! diff -q "$src" "$dst" >/dev/null 2>&1; then
+    cp "$dst" "${dst}.bak"
+    echo "Backed up modified ${dst} to ${dst}.bak"
+  fi
+  cp "$src" "$dst"
+}
+
 # If running from a clone of issue-agent, use local templates
 if [ -f "$(dirname "$0")/template/agent" ]; then
   TEMPLATE_DIR="$(dirname "$0")/template"
   cp "$TEMPLATE_DIR/agent" .agent/agent
-  cp "$TEMPLATE_DIR/prompt.md" .agent/prompt.md
+  safe_copy "$TEMPLATE_DIR/prompt.md" .agent/prompt.md
   cp "$TEMPLATE_DIR/.gitignore" .agent/.gitignore
+  
+  # Install VERSION
+  if [ -f "$(dirname "$0")/VERSION" ]; then
+    cp "$(dirname "$0")/VERSION" .agent/VERSION
+  fi
   
   # Parallel agent files (optional)
   if [ -f "$TEMPLATE_DIR/agent-once" ]; then
     cp "$TEMPLATE_DIR/agent-once" .agent/agent-once
     cp "$TEMPLATE_DIR/parallel-agents" .agent/parallel-agents
-    cp "$TEMPLATE_DIR/agent-once-prompt.md" .agent/agent-once-prompt.md
+    safe_copy "$TEMPLATE_DIR/agent-once-prompt.md" .agent/agent-once-prompt.md
     chmod +x .agent/agent-once .agent/parallel-agents
   fi
 else
   curl -fsSL "$TEMPLATE_ROOT/agent" -o .agent/agent
-  curl -fsSL "$TEMPLATE_ROOT/prompt.md" -o .agent/prompt.md
+  
+  # Download prompt.md to a temp file first, then safe_copy
+  prompt_tmp=$(mktemp)
+  curl -fsSL "$TEMPLATE_ROOT/prompt.md" -o "$prompt_tmp"
+  safe_copy "$prompt_tmp" .agent/prompt.md
+  rm -f "$prompt_tmp"
+  
   curl -fsSL "$TEMPLATE_ROOT/.gitignore" -o .agent/.gitignore
   
-  # Parallel agent files (optional)
+  # Install VERSION
+  curl -fsSL "https://raw.githubusercontent.com/dalpat/issue-agent/main/VERSION" -o .agent/VERSION 2>/dev/null || true
+  
+  # Parallel agent files (optional, all-or-nothing)
   if curl -fsSL "$TEMPLATE_ROOT/agent-once" -o .agent/agent-once 2>/dev/null; then
-    curl -fsSL "$TEMPLATE_ROOT/parallel-agents" -o .agent/parallel-agents
-    curl -fsSL "$TEMPLATE_ROOT/agent-once-prompt.md" -o .agent/agent-once-prompt.md
-    chmod +x .agent/agent-once .agent/parallel-agents
+    if curl -fsSL "$TEMPLATE_ROOT/parallel-agents" -o .agent/parallel-agents 2>/dev/null; then
+      prompt_once_tmp=$(mktemp)
+      if curl -fsSL "$TEMPLATE_ROOT/agent-once-prompt.md" -o "$prompt_once_tmp" 2>/dev/null; then
+        safe_copy "$prompt_once_tmp" .agent/agent-once-prompt.md
+        rm -f "$prompt_once_tmp"
+        chmod +x .agent/agent-once .agent/parallel-agents
+      else
+        rm -f "$prompt_once_tmp"
+        echo "Warning: Partial download of parallel agent files. Cleaning up." >&2
+        rm -f .agent/agent-once .agent/parallel-agents .agent/agent-once-prompt.md
+      fi
+    else
+      echo "Warning: Partial download of parallel agent files. Cleaning up." >&2
+      rm -f .agent/agent-once .agent/parallel-agents .agent/agent-once-prompt.md
+    fi
   fi
 fi
 
@@ -70,7 +107,7 @@ else
 fi
 
 if [ -f ".gitignore" ]; then
-  if ! grep -q "^\\.agent/progress\\.md$" .gitignore; then
+  if ! grep -qF ".agent/progress.md" .gitignore; then
     echo ".agent/progress.md" >> .gitignore
     echo "Updated .gitignore"
   fi
